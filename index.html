@@ -194,8 +194,10 @@
         let player = {
             x: 0,
             y: 0,
+            direction: 0, // 0=right, 1=down, 2=left, 3=up
             onBorder: true,
-            trail: []
+            trail: [],
+            moveTimer: 0
         };
         let enemies = [];
         let lives = 3;
@@ -203,13 +205,13 @@
         let claimedPercentage = 0;
         let keys = {};
         let gameRunning = true;
+        let lastMoveTime = 0;
+        const MOVE_DELAY = 50; // milliseconds between moves
 
         // Touch controls
         let touchStartX = 0;
         let touchStartY = 0;
-        let touchCurrentX = 0;
-        let touchCurrentY = 0;
-        let isTouching = false;
+        let touchSwipeDetected = false;
 
         // Detect if mobile device
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
@@ -242,8 +244,10 @@
         function initPlayer() {
             player.x = 0;
             player.y = Math.floor(GRID_ROWS / 2);
+            player.direction = 0; // facing right
             player.onBorder = true;
             player.trail = [];
+            player.moveTimer = 0;
         }
 
         // Initialize enemies
@@ -342,31 +346,41 @@
         function updatePlayer() {
             if (!gameRunning) return;
 
+            const currentTime = Date.now();
+
+            // Determine desired direction from input
+            let desiredDirection = player.direction;
+
+            // Keyboard controls - set direction based on key press
+            if (keys['ArrowRight'] || keys['d']) desiredDirection = 0; // right
+            if (keys['ArrowDown'] || keys['s']) desiredDirection = 1; // down
+            if (keys['ArrowLeft'] || keys['a']) desiredDirection = 2; // left
+            if (keys['ArrowUp'] || keys['w']) desiredDirection = 3; // up
+
+            // Update direction (instant turn)
+            player.direction = desiredDirection;
+
+            // Move at fixed intervals
+            if (currentTime - lastMoveTime < MOVE_DELAY) {
+                return;
+            }
+            lastMoveTime = currentTime;
+
+            // Calculate next position based on direction
             let newX = player.x;
             let newY = player.y;
 
-            // Keyboard movement
-            if (keys['ArrowLeft'] || keys['a']) newX -= PLAYER_SPEED / CELL_SIZE;
-            if (keys['ArrowRight'] || keys['d']) newX += PLAYER_SPEED / CELL_SIZE;
-            if (keys['ArrowUp'] || keys['w']) newY -= PLAYER_SPEED / CELL_SIZE;
-            if (keys['ArrowDown'] || keys['s']) newY += PLAYER_SPEED / CELL_SIZE;
-
-            // Touch movement
-            if (isTouching) {
-                const deltaX = touchCurrentX - touchStartX;
-                const deltaY = touchCurrentY - touchStartY;
-                const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-                if (distance > 10) {
-                    const angle = Math.atan2(deltaY, deltaX);
-                    newX += Math.cos(angle) * PLAYER_SPEED / CELL_SIZE;
-                    newY += Math.sin(angle) * PLAYER_SPEED / CELL_SIZE;
-                }
+            switch(player.direction) {
+                case 0: newX++; break; // right
+                case 1: newY++; break; // down
+                case 2: newX--; break; // left
+                case 3: newY--; break; // up
             }
 
-            // Clamp to grid
-            newX = Math.max(0, Math.min(GRID_COLS - 1, newX));
-            newY = Math.max(0, Math.min(GRID_ROWS - 1, newY));
+            // Check bounds
+            if (newX < 0 || newX >= GRID_COLS || newY < 0 || newY >= GRID_ROWS) {
+                return; // Can't move outside grid
+            }
 
             const gridX = Math.floor(newX);
             const gridY = Math.floor(newY);
@@ -564,28 +578,45 @@
             const rect = canvas.getBoundingClientRect();
             touchStartX = touch.clientX - rect.left;
             touchStartY = touch.clientY - rect.top;
-            touchCurrentX = touchStartX;
-            touchCurrentY = touchStartY;
-            isTouching = true;
+            touchSwipeDetected = false;
         }, { passive: false });
 
         canvas.addEventListener('touchmove', (e) => {
             e.preventDefault();
-            if (!isTouching) return;
+            if (touchSwipeDetected) return;
+
             const touch = e.touches[0];
             const rect = canvas.getBoundingClientRect();
-            touchCurrentX = touch.clientX - rect.left;
-            touchCurrentY = touch.clientY - rect.top;
+            const touchCurrentX = touch.clientX - rect.left;
+            const touchCurrentY = touch.clientY - rect.top;
+
+            const deltaX = touchCurrentX - touchStartX;
+            const deltaY = touchCurrentY - touchStartY;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+            // Detect swipe direction when threshold is reached
+            if (distance > 30) {
+                touchSwipeDetected = true;
+
+                // Determine primary direction (horizontal or vertical)
+                if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                    // Horizontal swipe
+                    player.direction = deltaX > 0 ? 0 : 2; // right : left
+                } else {
+                    // Vertical swipe
+                    player.direction = deltaY > 0 ? 1 : 3; // down : up
+                }
+            }
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
             e.preventDefault();
-            isTouching = false;
+            touchSwipeDetected = false;
         }, { passive: false });
 
         canvas.addEventListener('touchcancel', (e) => {
             e.preventDefault();
-            isTouching = false;
+            touchSwipeDetected = false;
         }, { passive: false });
 
         // Handle window resize
