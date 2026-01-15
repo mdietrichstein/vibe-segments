@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibe Segments - Territory Claiming Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        #gameContainer {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        #gameCanvas {
+            border: 3px solid #333;
+            display: block;
+            background: #000;
+        }
+
+        #ui {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        #controls {
+            margin-top: 10px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+
+        .game-over h2 {
+            margin-bottom: 10px;
+            color: #4CAF50;
+        }
+
+        .game-over button {
+            margin-top: 20px;
+            padding: 10px 30px;
+            font-size: 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .game-over button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div>Territory: <span id="percentage">0</span>%</div>
+            <div>Level: <span id="level">1</span></div>
+            <div>Lives: <span id="lives">3</span></div>
+        </div>
+        <div id="controls">
+            Use Arrow Keys or WASD to move • Claim 75% to win!
+        </div>
+    </div>
+
+    <div id="gameOver" class="game-over">
+        <h2 id="resultText"></h2>
+        <p id="finalStats"></p>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game constants
+        const GRID_SIZE = 800;
+        const CELL_SIZE = 4;
+        const GRID_COLS = GRID_SIZE / CELL_SIZE;
+        const GRID_ROWS = canvas.height / CELL_SIZE;
+        const PLAYER_SPEED = 2;
+
+        // Cell states
+        const EMPTY = 0;
+        const CLAIMED = 1;
+        const BORDER = 2;
+        const TRAIL = 3;
+
+        // Game state
+        let grid = [];
+        let player = {
+            x: 0,
+            y: 0,
+            onBorder: true,
+            trail: []
+        };
+        let enemies = [];
+        let lives = 3;
+        let level = 1;
+        let claimedPercentage = 0;
+        let keys = {};
+        let gameRunning = true;
+
+        // Initialize grid
+        function initGrid() {
+            grid = Array(GRID_ROWS).fill(0).map(() => Array(GRID_COLS).fill(EMPTY));
+
+            // Set borders
+            for (let i = 0; i < GRID_COLS; i++) {
+                grid[0][i] = BORDER;
+                grid[GRID_ROWS - 1][i] = BORDER;
+            }
+            for (let i = 0; i < GRID_ROWS; i++) {
+                grid[i][0] = BORDER;
+                grid[i][GRID_COLS - 1] = BORDER;
+            }
+
+            // Set initial claimed area (small starting zone)
+            for (let y = 1; y < GRID_ROWS - 1; y++) {
+                for (let x = 1; x < GRID_COLS - 1; x++) {
+                    grid[y][x] = CLAIMED;
+                }
+            }
+        }
+
+        // Initialize player
+        function initPlayer() {
+            player.x = 0;
+            player.y = Math.floor(GRID_ROWS / 2);
+            player.onBorder = true;
+            player.trail = [];
+        }
+
+        // Initialize enemies
+        function initEnemies() {
+            enemies = [];
+            for (let i = 0; i < level; i++) {
+                enemies.push({
+                    x: Math.random() * (GRID_COLS - 4) + 2,
+                    y: Math.random() * (GRID_ROWS - 4) + 2,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: (Math.random() - 0.5) * 2
+                });
+            }
+        }
+
+        // Calculate claimed percentage
+        function calculateClaimed() {
+            let claimed = 0;
+            let total = (GRID_COLS - 2) * (GRID_ROWS - 2);
+
+            for (let y = 1; y < GRID_ROWS - 1; y++) {
+                for (let x = 1; x < GRID_COLS - 1; x++) {
+                    if (grid[y][x] === EMPTY) {
+                        claimed++;
+                    }
+                }
+            }
+
+            return Math.round((1 - claimed / total) * 100);
+        }
+
+        // Flood fill algorithm to claim territory
+        function floodFill(startX, startY, enemyPositions) {
+            const filled = new Set();
+            const toCheck = [[startX, startY]];
+            let hasEnemy = false;
+
+            while (toCheck.length > 0) {
+                const [x, y] = toCheck.pop();
+                const key = `${x},${y}`;
+
+                if (filled.has(key)) continue;
+                if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) continue;
+                if (grid[y][x] !== EMPTY) continue;
+
+                // Check if enemy is in this region
+                for (const enemy of enemyPositions) {
+                    if (Math.floor(enemy.x) === x && Math.floor(enemy.y) === y) {
+                        hasEnemy = true;
+                    }
+                }
+
+                filled.add(key);
+                toCheck.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+            }
+
+            return { filled, hasEnemy };
+        }
+
+        // Claim territory
+        function claimTerritory() {
+            // Mark trail as border
+            for (const [x, y] of player.trail) {
+                grid[y][x] = BORDER;
+            }
+
+            // Find all separate empty regions
+            const visited = new Set();
+            const regions = [];
+
+            for (let y = 1; y < GRID_ROWS - 1; y++) {
+                for (let x = 1; x < GRID_COLS - 1; x++) {
+                    const key = `${x},${y}`;
+                    if (grid[y][x] === EMPTY && !visited.has(key)) {
+                        const result = floodFill(x, y, enemies);
+                        result.filled.forEach(k => visited.add(k));
+                        regions.push(result);
+                    }
+                }
+            }
+
+            // Claim regions without enemies
+            for (const region of regions) {
+                if (!region.hasEnemy) {
+                    for (const key of region.filled) {
+                        const [x, y] = key.split(',').map(Number);
+                        grid[y][x] = CLAIMED;
+                    }
+                }
+            }
+
+            player.trail = [];
+        }
+
+        // Update player
+        function updatePlayer() {
+            if (!gameRunning) return;
+
+            let newX = player.x;
+            let newY = player.y;
+
+            // Movement
+            if (keys['ArrowLeft'] || keys['a']) newX -= PLAYER_SPEED / CELL_SIZE;
+            if (keys['ArrowRight'] || keys['d']) newX += PLAYER_SPEED / CELL_SIZE;
+            if (keys['ArrowUp'] || keys['w']) newY -= PLAYER_SPEED / CELL_SIZE;
+            if (keys['ArrowDown'] || keys['s']) newY += PLAYER_SPEED / CELL_SIZE;
+
+            // Clamp to grid
+            newX = Math.max(0, Math.min(GRID_COLS - 1, newX));
+            newY = Math.max(0, Math.min(GRID_ROWS - 1, newY));
+
+            const gridX = Math.floor(newX);
+            const gridY = Math.floor(newY);
+            const currentCell = grid[gridY][gridX];
+
+            // Check if on border or claimed territory
+            const wasOnBorder = player.onBorder;
+            player.onBorder = (currentCell === BORDER || currentCell === CLAIMED);
+
+            // Moving into empty space - start trail
+            if (wasOnBorder && currentCell === EMPTY) {
+                player.trail = [[gridX, gridY]];
+            }
+            // Continuing trail
+            else if (!player.onBorder && currentCell === EMPTY) {
+                const lastTrail = player.trail[player.trail.length - 1];
+                if (!lastTrail || lastTrail[0] !== gridX || lastTrail[1] !== gridY) {
+                    player.trail.push([gridX, gridY]);
+                }
+            }
+            // Returned to safe zone - claim territory
+            else if (!wasOnBorder && player.onBorder && player.trail.length > 0) {
+                claimTerritory();
+            }
+
+            player.x = newX;
+            player.y = newY;
+        }
+
+        // Update enemies
+        function updateEnemies() {
+            for (const enemy of enemies) {
+                enemy.x += enemy.vx * 0.1;
+                enemy.y += enemy.vy * 0.1;
+
+                const gridX = Math.floor(enemy.x);
+                const gridY = Math.floor(enemy.y);
+
+                // Bounce off walls and claimed territory
+                if (gridX <= 1 || gridX >= GRID_COLS - 2 ||
+                    grid[gridY][gridX] === BORDER || grid[gridY][gridX] === CLAIMED) {
+                    enemy.vx *= -1;
+                }
+                if (gridY <= 1 || gridY >= GRID_ROWS - 2 ||
+                    grid[gridY][gridX] === BORDER || grid[gridY][gridX] === CLAIMED) {
+                    enemy.vy *= -1;
+                }
+
+                // Keep in bounds
+                enemy.x = Math.max(2, Math.min(GRID_COLS - 3, enemy.x));
+                enemy.y = Math.max(2, Math.min(GRID_ROWS - 3, enemy.y));
+
+                // Check collision with player trail
+                for (const [tx, ty] of player.trail) {
+                    if (Math.abs(enemy.x - tx) < 1 && Math.abs(enemy.y - ty) < 1) {
+                        loseLife();
+                        return;
+                    }
+                }
+
+                // Check collision with player
+                if (Math.abs(enemy.x - player.x) < 1 && Math.abs(enemy.y - player.y) < 1 && !player.onBorder) {
+                    loseLife();
+                    return;
+                }
+            }
+        }
+
+        // Lose a life
+        function loseLife() {
+            lives--;
+            document.getElementById('lives').textContent = lives;
+
+            if (lives <= 0) {
+                gameOver(false);
+            } else {
+                initPlayer();
+            }
+        }
+
+        // Game over
+        function gameOver(won) {
+            gameRunning = false;
+            const overlay = document.getElementById('gameOver');
+            const resultText = document.getElementById('resultText');
+            const finalStats = document.getElementById('finalStats');
+
+            if (won) {
+                resultText.textContent = '🎉 Victory!';
+                resultText.style.color = '#4CAF50';
+                finalStats.textContent = `You completed Level ${level} with ${lives} lives remaining!`;
+            } else {
+                resultText.textContent = '💀 Game Over';
+                resultText.style.color = '#f44336';
+                finalStats.textContent = `You reached ${claimedPercentage}% territory on Level ${level}`;
+            }
+
+            overlay.style.display = 'block';
+        }
+
+        // Render
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid
+            for (let y = 0; y < GRID_ROWS; y++) {
+                for (let x = 0; x < GRID_COLS; x++) {
+                    const cell = grid[y][x];
+
+                    if (cell === CLAIMED) {
+                        ctx.fillStyle = '#2196F3';
+                    } else if (cell === BORDER) {
+                        ctx.fillStyle = '#00BCD4';
+                    } else {
+                        continue;
+                    }
+
+                    ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                }
+            }
+
+            // Draw trail
+            ctx.fillStyle = '#FFEB3B';
+            for (const [x, y] of player.trail) {
+                ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+
+            // Draw player
+            ctx.fillStyle = '#4CAF50';
+            ctx.fillRect(
+                player.x * CELL_SIZE - CELL_SIZE,
+                player.y * CELL_SIZE - CELL_SIZE,
+                CELL_SIZE * 2,
+                CELL_SIZE * 2
+            );
+
+            // Draw enemies
+            ctx.fillStyle = '#F44336';
+            for (const enemy of enemies) {
+                ctx.beginPath();
+                ctx.arc(
+                    enemy.x * CELL_SIZE,
+                    enemy.y * CELL_SIZE,
+                    CELL_SIZE * 1.5,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+            }
+
+            // Update UI
+            claimedPercentage = calculateClaimed();
+            document.getElementById('percentage').textContent = claimedPercentage;
+            document.getElementById('level').textContent = level;
+
+            // Check win condition
+            if (claimedPercentage >= 75 && gameRunning) {
+                level++;
+                if (level > 10) {
+                    gameOver(true);
+                } else {
+                    initGrid();
+                    initPlayer();
+                    initEnemies();
+                }
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            updatePlayer();
+            updateEnemies();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Input handling
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Initialize and start game
+        initGrid();
+        initPlayer();
+        initEnemies();
+        gameLoop();
+    </script>
+</body>
+</html>
