@@ -224,7 +224,7 @@
         function initGrid() {
             grid = Array(GRID_ROWS).fill(0).map(() => Array(GRID_COLS).fill(EMPTY));
 
-            // Set borders
+            // Set borders as claimed territory (safe zones)
             for (let i = 0; i < GRID_COLS; i++) {
                 grid[0][i] = BORDER;
                 grid[GRID_ROWS - 1][i] = BORDER;
@@ -234,12 +234,8 @@
                 grid[i][GRID_COLS - 1] = BORDER;
             }
 
-            // Set initial claimed area (small starting zone)
-            for (let y = 1; y < GRID_ROWS - 1; y++) {
-                for (let x = 1; x < GRID_COLS - 1; x++) {
-                    grid[y][x] = CLAIMED;
-                }
-            }
+            // Interior starts as EMPTY (unclaimed territory)
+            // Player will claim territory by drawing trails
         }
 
         // Initialize player
@@ -270,13 +266,13 @@
 
             for (let y = 1; y < GRID_ROWS - 1; y++) {
                 for (let x = 1; x < GRID_COLS - 1; x++) {
-                    if (grid[y][x] === EMPTY) {
+                    if (grid[y][x] === CLAIMED || grid[y][x] === BORDER) {
                         claimed++;
                     }
                 }
             }
 
-            return Math.round((1 - claimed / total) * 100);
+            return Math.round((claimed / total) * 100);
         }
 
         // Flood fill algorithm to claim territory
